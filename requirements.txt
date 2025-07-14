@@ -1,0 +1,17 @@
+fastapi[standard]
+streamlit
+langchain
+langgraph
+openai
+faiss-cpu
+PyPDF2
+python-multipart
+pydantic
+python-dotenv
+requests
+typing-extensions
+tiktoken
+langchain_google_genai
+sentence-transformers
+scikit-learn
+rank_bm25
