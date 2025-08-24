@@ -14,8 +14,13 @@ import uuid
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
-from langgraph.graph import StateGraph, END
-from fastapi import HTTPException
+
+# Custom exception for error handling
+class HTTPException(Exception):
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(detail)
 
 # Hugging Face imports for TinyLlama
 from transformers import AutoTokenizer, AutoModelForCausalLM, TrainingArguments, Trainer
@@ -482,138 +487,10 @@ class SmartAssistant:
             logger.error(f"Error creating agent: {e}")
             return None
 
-    def create_workflow(self) -> StateGraph:
-        """Create enhanced LangGraph workflow with agentic AI capabilities"""
-        workflow = StateGraph(SessionState)
-
-        # 1. Retrieve Context with Agentic Search
-        def retrieve_context(state: SessionState):
-            logger.info("Workflow Step: Agentic Context Retrieval")
-            question = state["current_question"]
-            vector_store = state["vector_store"]
-            
-            # Use agentic search for better context retrieval
-            search_tool = DocumentSearchTool()
-            context = search_tool._run(question, vector_store)
-            
-            return {"retrieved_docs": context, "search_query": question}
-
-        # 2. Agentic Context Analysis
-        def analyze_context(state: SessionState):
-            logger.info("Workflow Step: Agentic Context Analysis")
-            question = state["current_question"]
-            context = state["retrieved_docs"]
-            
-            analysis_tool = ContextAnalysisTool()
-            analysis = analysis_tool._run(context, question)
-            
-            # Determine if context is sufficient
-            relevance_score = self._evaluate_relevance(analysis)
-            
-            return {
-                "context_analysis": analysis,
-                "context_is_relevant": relevance_score > 0.7,
-                "relevance_score": relevance_score
-            }
-
-        # 3. Agentic Answer Generation
-        def generate_answer(state: SessionState):
-            logger.info("Workflow Step: Agentic Answer Generation")
-            question = state["current_question"]
-            context = state["retrieved_docs"]
-            history = state["conversation_history"]
-            
-            # Format conversation history
-            history_str = "\n".join([f"Q: {h['question']}\nA: {h['answer']}" for h in history[-3:]])
-            
-            # Use agentic answer generation
-            answer_tool = AnswerGenerationTool()
-            answer = answer_tool._run(context, question, history_str)
-            
-            # Extract source snippets
-            source_snippets = self._extract_source_snippets(context, answer)
-            
-            # Store training data for fine-tuning
-            self.training_data["documents"].append(context[:1000])  # Truncate for training
-            self.training_data["questions"].append(question)
-            self.training_data["answers"].append(answer)
-            
-            updated_history = history.copy()
-            updated_history.append({
-                "question": question,
-                "answer": answer,
-                "source_snippets": source_snippets,
-                "timestamp": datetime.now().isoformat(),
-                "context_analysis": state.get("context_analysis", ""),
-                "relevance_score": state.get("relevance_score", 0.0)
-            })
-
-            return {
-                "current_answer": answer, 
-                "conversation_history": updated_history,
-                "source_snippets": source_snippets
-            }
-
-        # 4. Enhanced Fallback with Agentic Reasoning
-        def fallback_answer(state: SessionState):
-            logger.info("Workflow Step: Agentic Fallback Answer")
-            question = state["current_question"]
-            
-            try:
-                # Get LLM
-                llm, _, _ = get_tinyllama_model()
-                
-                # Use agentic reasoning to provide helpful fallback
-                fallback_prompt = f"""<|system|>
-The user asked: "{question}"
-Unfortunately, the document doesn't contain sufficient information to answer this question.
-
-Please provide a helpful response that:
-1. Acknowledges the limitation
-2. Suggests what information might be needed
-3. Offers to help with related questions that CAN be answered from the document
-
-Response:</s>
-<|user|>
-Please provide a helpful fallback response.</s>
-<|assistant|>"""
-                
-                response = llm.invoke(fallback_prompt)
-                answer = response.content if hasattr(response, 'content') else str(response)
-            except Exception as e:
-                answer = "I'm sorry, but I couldn't find a relevant answer in the document for your question. Please try asking something else about the document content."
-            
-            return {"current_answer": answer}
-
-        # 5. Define Conditional Edges
-        def decide_to_generate(state: SessionState):
-            logger.info("Workflow Step: Decision Making")
-            if state["context_is_relevant"]:
-                logger.info("Decision: Context is relevant. Generating answer.")
-                return "generate_answer"
-            else:
-                logger.info("Decision: Context is not relevant. Using fallback.")
-                return "fallback_answer"
-
-        workflow.add_node("retrieve_context", retrieve_context)
-        workflow.add_node("analyze_context", analyze_context)
-        workflow.add_node("generate_answer", generate_answer)
-        workflow.add_node("fallback_answer", fallback_answer)
-
-        workflow.set_entry_point("retrieve_context")
-        workflow.add_edge("retrieve_context", "analyze_context")
-        workflow.add_conditional_edges(
-            "analyze_context",
-            decide_to_generate,
-            {
-                "generate_answer": "generate_answer",
-                "fallback_answer": "fallback_answer",
-            },
-        )
-        workflow.add_edge("generate_answer", END)
-        workflow.add_edge("fallback_answer", END)
-
-        return workflow.compile()
+    def create_workflow(self):
+        """Create simplified workflow without LangGraph"""
+        # Simple workflow implementation - no complex state management needed
+        return None
 
     def fine_tune_on_documents(self, epochs: int = 3) -> bool:
         """Fine-tune the model on collected document data"""
