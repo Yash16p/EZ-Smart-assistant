@@ -42,9 +42,21 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Global variables for lazy initialization
+llm = None
+tokenizer = None
+base_model = None
+embeddings = None
+finetuning_manager = None
+
 # Initialize TinyLlama model
 def get_tinyllama_model():
     """Initialize TinyLlama model optimized for CPU"""
+    global llm, tokenizer, base_model
+    
+    if llm is not None:
+        return llm, tokenizer, base_model
+        
     try:
         model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
         
@@ -80,22 +92,47 @@ def get_tinyllama_model():
             pipeline=transformers_pipeline
         )
         
+        llm = pipeline
+        base_model = model
+        
         logger.info("✅ TinyLlama model loaded successfully")
-        return pipeline, tokenizer, model
+        return llm, tokenizer, base_model
         
     except Exception as e:
         logger.error(f"❌ Error loading TinyLlama: {e}")
         raise Exception(f"Failed to load TinyLlama model: {str(e)}")
 
-# Initialize model components
-llm, tokenizer, base_model = get_tinyllama_model()
+def get_embeddings():
+    """Initialize CPU-friendly embeddings"""
+    global embeddings
+    
+    if embeddings is not None:
+        return embeddings
+        
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        return embeddings
+    except Exception as e:
+        logger.error(f"❌ Error loading embeddings: {e}")
+        raise Exception(f"Failed to load embeddings: {str(e)}")
 
-# Initialize CPU-friendly embeddings
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={'device': 'cpu'},
-    encode_kwargs={'normalize_embeddings': True}
-)
+def get_finetuning_manager():
+    """Initialize fine-tuning manager"""
+    global finetuning_manager
+    
+    if finetuning_manager is not None:
+        return finetuning_manager
+        
+    try:
+        finetuning_manager = FineTuningManager()
+        return finetuning_manager
+    except Exception as e:
+        logger.error(f"❌ Error creating fine-tuning manager: {e}")
+        raise Exception(f"Failed to create fine-tuning manager: {str(e)}")
 
 # Fine-tuning configuration
 class FineTuningManager:
@@ -115,6 +152,9 @@ class FineTuningManager:
     def prepare_training_data(self, documents: List[str], questions: List[str], answers: List[str]) -> Dataset:
         """Prepare training data for fine-tuning"""
         try:
+            # Get tokenizer
+            _, tokenizer, _ = get_tinyllama_model()
+            
             # Format data for instruction fine-tuning
             training_data = []
             for doc, q, a in zip(documents, questions, answers):
@@ -140,6 +180,9 @@ Answer: {a}"""
         """Fine-tune the model on prepared data"""
         try:
             logger.info("🚀 Starting model fine-tuning...")
+            
+            # Get base model
+            _, _, base_model = get_tinyllama_model()
             
             # Apply LoRA to base model
             model = get_peft_model(base_model, self.lora_config)
@@ -198,10 +241,7 @@ Answer: {a}"""
                 max_new_tokens=512,
                 temperature=0.1
             )
-        return llm  # Fallback to base model
-
-# Initialize fine-tuning manager
-finetuning_manager = FineTuningManager()
+        return get_tinyllama_model()[0]  # Fallback to base model
 
 # Agentic AI Tools
 class DocumentSearchTool(BaseTool):
@@ -225,7 +265,11 @@ class ContextAnalysisTool(BaseTool):
     
     def _run(self, context: str, question: str) -> str:
         """Analyze context relevance"""
-        prompt = f"""<|system|>
+        try:
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
+            
+            prompt = f"""<|system|>
 You are a context analysis expert. Analyze if the provided context is relevant to answer the question.
 
 Question: {question}
@@ -240,8 +284,7 @@ Analysis:</s>
 <|user|>
 Please analyze the context relevance.</s>
 <|assistant|>"""
-        
-        try:
+            
             response = llm.invoke(prompt)
             return response.content if hasattr(response, 'content') else str(response)
         except Exception as e:
@@ -256,7 +299,11 @@ class AnswerGenerationTool(BaseTool):
     
     def _run(self, context: str, question: str, history: str) -> str:
         """Generate structured answer"""
-        prompt = f"""<|system|>
+        try:
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
+            
+            prompt = f"""<|system|>
 You are an expert document analyst. Generate a comprehensive answer to the question based on the provided context.
 
 Context: {context}
@@ -273,8 +320,7 @@ Answer:</s>
 <|user|>
 Please answer the question based on the context.</s>
 <|assistant|>"""
-        
-        try:
+            
             response = llm.invoke(prompt)
             return response.content if hasattr(response, 'content') else str(response)
         except Exception as e:
@@ -383,6 +429,8 @@ class DocumentProcessor:
             if not processed_docs:
                 raise HTTPException(status_code=400, detail="No valid text chunks found after cleaning")
 
+            # Get embeddings
+            embeddings = get_embeddings()
             return FAISS.from_documents(processed_docs, embeddings)
         except Exception as e:
             logger.error(f"Error creating vector store: {e}")
@@ -416,6 +464,9 @@ class SmartAssistant:
     def create_agent(self, vector_store) -> Any:
         """Create an agentic AI system for document analysis"""
         try:
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
+            
             # Create agent with tools
             agent = initialize_agent(
                 tools=self.tools,
@@ -508,8 +559,12 @@ class SmartAssistant:
             logger.info("Workflow Step: Agentic Fallback Answer")
             question = state["current_question"]
             
-            # Use agentic reasoning to provide helpful fallback
-            fallback_prompt = f"""<|system|>
+            try:
+                # Get LLM
+                llm, _, _ = get_tinyllama_model()
+                
+                # Use agentic reasoning to provide helpful fallback
+                fallback_prompt = f"""<|system|>
 The user asked: "{question}"
 Unfortunately, the document doesn't contain sufficient information to answer this question.
 
@@ -522,8 +577,7 @@ Response:</s>
 <|user|>
 Please provide a helpful fallback response.</s>
 <|assistant|>"""
-            
-            try:
+                
                 response = llm.invoke(fallback_prompt)
                 answer = response.content if hasattr(response, 'content') else str(response)
             except Exception as e:
@@ -569,6 +623,9 @@ Please provide a helpful fallback response.</s>
                 return False
             
             logger.info(f"🎯 Starting fine-tuning with {len(self.training_data['documents'])} training examples")
+            
+            # Get fine-tuning manager
+            finetuning_manager = get_finetuning_manager()
             
             # Prepare training data
             training_dataset = finetuning_manager.prepare_training_data(
@@ -650,6 +707,9 @@ Please provide a helpful fallback response.</s>
         try:
             cleaned_text = clean_text(document_text)
             
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
+            
             # Create a specialized summarization prompt for TinyLlama
             summary_prompt = f"""<|system|>
 You are an expert document analyst. Create a comprehensive summary of this document in exactly 150 words.
@@ -678,6 +738,9 @@ Please summarize this document.</s>
         """Generate challenge questions using TinyLlama"""
         try:
             cleaned_text = clean_text(document_text)
+            
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
             
             challenge_prompt = f"""<|system|>
 Generate exactly 3 sophisticated questions that test understanding of this document.
@@ -732,6 +795,9 @@ Please generate challenge questions.</s>
         """Evaluate user's answer using TinyLlama"""
         try:
             context = clean_text(document_text[:4000])
+            
+            # Get LLM
+            llm, _, _ = get_tinyllama_model()
             
             evaluation_prompt = f"""<|system|>
 Evaluate this user's answer to a challenge question.

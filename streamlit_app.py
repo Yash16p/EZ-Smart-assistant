@@ -1,11 +1,17 @@
 import streamlit as st
-import requests
 import json
+import tempfile
+import os
+import PyPDF2
+import re
+import unicodedata
 from typing import Dict, List
 import time
+import uuid
+from datetime import datetime
 
-# Configuration
-API_BASE_URL = "http://localhost:8000"
+# Import AI components directly
+from src.workflow import SmartAssistant, safe_temp_file
 
 # Page configuration
 st.set_page_config(
@@ -14,6 +20,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize SmartAssistant globally
+@st.cache_resource
+def get_assistant():
+    """Get cached SmartAssistant instance"""
+    return SmartAssistant()
+
+# Initialize assistant
+assistant = get_assistant()
 
 # Improved custom CSS with modern color scheme
 st.markdown("""
@@ -474,55 +489,99 @@ def initialize_session_state():
         st.session_state.conversation_history = []
     if 'current_mode' not in st.session_state:
         st.session_state.current_mode = "upload"
+    if 'document_content' not in st.session_state:
+        st.session_state.document_content = ""
+    if 'vector_store' not in st.session_state:
+        st.session_state.vector_store = None
 
-def upload_document(file) -> Dict:
-    """Upload document to backend"""
+def process_document(file) -> Dict:
+    """Process document directly using SmartAssistant"""
     try:
-        files = {"file": (file.name, file.read(), file.type)}
-        response = requests.post(f"{API_BASE_URL}/upload", files=files)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error uploading document: {str(e)}")
+        with st.spinner("🔄 Processing document... This may take a moment."):
+            # Create temporary file
+            with safe_temp_file(suffix=f".{file.name.split('.')[-1]}") as tmp_file:
+                content = file.read()
+                tmp_file.write(content)
+                tmp_file.flush()
+                
+                # Process document based on type
+                if file.type == "application/pdf":
+                    document_text = assistant.processor.extract_text_from_pdf(tmp_file.name)
+                else:
+                    document_text = assistant.processor.extract_text_from_txt(tmp_file.name)
+            
+            if not document_text.strip():
+                st.error("No readable text found in the document")
+                return None
+            
+            # Create vector store
+            vector_store = assistant.processor.create_vector_store(document_text)
+            
+            # Generate summary and challenge questions
+            summary = assistant.summarize_document(document_text)
+            challenge_questions = assistant.generate_challenge_questions(document_text)
+            
+            # Store in session state
+            st.session_state.document_content = document_text
+            st.session_state.vector_store = vector_store
+            
+            return {
+                "summary": summary,
+                "challenge_questions": challenge_questions,
+                "status": "success"
+            }
+            
+    except Exception as e:
+        st.error(f"Error processing document: {str(e)}")
         return None
 
-def ask_question(question: str) -> Dict:
-    """Ask a question to the assistant"""
+def ask_question_directly(question: str) -> Dict:
+    """Ask question directly using SmartAssistant"""
     try:
-        payload = {
-            "question": question,
-            "session_id": st.session_state.session_id
-        }
-        response = requests.post(f"{API_BASE_URL}/ask", json=payload)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error asking question: {str(e)}")
+        with st.spinner("🤔 Thinking..."):
+            # Create workflow state
+            state = {
+                "current_question": question,
+                "vector_store": st.session_state.vector_store,
+                "conversation_history": st.session_state.get("conversation_history", []),
+                "document_content": st.session_state.get("document_content", ""),
+                "messages": [],
+            }
+            
+            # Invoke the workflow
+            result = assistant.create_workflow().invoke(state)
+            
+            # Extract answer and source snippets
+            last_entry = result["conversation_history"][-1]
+            answer = last_entry.get("current_answer", "No answer found.")
+            source_snippets = last_entry.get("source_snippets", [])
+            
+            # Update conversation history
+            st.session_state.conversation_history = result["conversation_history"]
+            
+            return {
+                "answer": answer,
+                "source_snippets": source_snippets
+            }
+            
+    except Exception as e:
+        st.error(f"Error processing question: {str(e)}")
         return None
 
-def submit_challenge_answer(question_id: str, answer: str) -> Dict:
-    """Submit answer to challenge question"""
+def evaluate_challenge_answer_directly(question_data: Dict, user_answer: str) -> Dict:
+    """Evaluate challenge answer directly using SmartAssistant"""
     try:
-        payload = {
-            "question_id": question_id,
-            "answer": answer,
-            "session_id": st.session_state.session_id
-        }
-        response = requests.post(f"{API_BASE_URL}/challenge/answer", json=payload)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error submitting answer: {str(e)}")
-        return None
-
-def get_conversation_history() -> Dict:
-    """Get conversation history"""
-    try:
-        response = requests.get(f"{API_BASE_URL}/session/{st.session_state.session_id}/history")
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error getting history: {str(e)}")
+        with st.spinner("📊 Evaluating your answer..."):
+            evaluation = assistant.evaluate_answer(
+                question_data["question"],
+                question_data["expected_answer"],
+                user_answer,
+                st.session_state.document_content
+            )
+            return evaluation
+            
+    except Exception as e:
+        st.error(f"Error evaluating answer: {str(e)}")
         return None
 
 def format_score_color(score: int) -> str:
@@ -530,7 +589,7 @@ def format_score_color(score: int) -> str:
     if score >= 80:
         return f'<span class="score-excellent">{score}/100</span>'
     elif score >= 60:
-        return f'<span class="score-good">{score}/100</span>'
+        return f'<span class="score-excellent">{score}/100</span>'
     else:
         return f'<span class="score-poor">{score}/100</span>'
 
@@ -580,17 +639,16 @@ def render_upload_section():
     )
     
     if uploaded_file is not None:
-        with st.spinner("🔄 Processing document... This may take a moment."):
-            result = upload_document(uploaded_file)
-            
-            if result:
-                st.session_state.session_id = result["session_id"]
-                st.session_state.summary = result["summary"]
-                st.session_state.challenge_questions = result["challenge_questions"]
-                st.session_state.document_uploaded = True
-                st.session_state.current_mode = "summary"
-                st.success("✅ Document uploaded and processed successfully!")
-                st.rerun()
+        result = process_document(uploaded_file)
+        
+        if result:
+            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.summary = result["summary"]
+            st.session_state.challenge_questions = result["challenge_questions"]
+            st.session_state.document_uploaded = True
+            st.session_state.current_mode = "summary"
+            st.success("✅ Document uploaded and processed successfully!")
+            st.rerun()
 
 def render_summary_section():
     """Render document summary section"""
@@ -617,7 +675,6 @@ def render_summary_section():
             st.session_state.current_mode = "challenge"
             st.rerun()
 
-
 def render_ask_mode():
     """Render Ask Anything mode"""
     st.markdown('<h2 class="mode-header">🤔 Ask Anything</h2>', unsafe_allow_html=True)
@@ -635,24 +692,23 @@ def render_ask_mode():
         for i, item in enumerate(st.session_state.conversation_history):
             st.markdown(f"""
             <div class="question-box">
-                <strong>Q{i+1}:</strong> {item['question']}
+                <strong>Q{i+1}:</strong> {item.get('question', 'N/A')}
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
             <div class="answer-box">
-                <strong>Answer:</strong> {item['answer']}
+                <strong>Answer:</strong> {item.get('current_answer', item.get('answer', 'N/A'))}
             </div>
             """, unsafe_allow_html=True)
             
-       
             if item.get('source_snippets'):
                 with st.expander("📄 View Supporting Evidence", expanded=False):
                     for snippet in item['source_snippets']:
                         st.markdown(f"""
                         <div style="background: var(--bg-secondary); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; border-left: 3px solid var(--primary-color);">
-                            <span style="font-weight: 600; color: var(--primary-color); font-size: 0.875rem;">Page {snippet['page_number']}</span>
-                            <p style="margin: 0.5rem 0 0 0; font-style: italic; color: var(--text-secondary);">"{snippet['content']}"</p>
+                            <span style="font-weight: 600; color: var(--primary-color); font-size: 0.875rem;">Page {snippet.get('page_number', 'N/A')}</span>
+                            <p style="margin: 0.5rem 0 0 0; font-style: italic; color: var(--text-secondary);">"{snippet.get('content', '')}"</p>
                         </div>
                         """, unsafe_allow_html=True)
     
@@ -668,28 +724,9 @@ def render_ask_mode():
     with col1:
         if st.button("Submit", use_container_width=True):
             if question:
-                with st.spinner("🤔 Thinking..."):
-                    result = ask_question(question)
-                    if result:
-                      
-                        conversation_entry = {
-                            'question': question,
-                            'answer': result['answer']
-                        }
-                        
-                       
-                        if result.get('source_snippets'):
-                            conversation_entry['source_snippets'] = [
-    {
-        'page_number': snippet.get('page_number') if isinstance(snippet, dict) else getattr(snippet, 'page_number', None),
-        'content': snippet.get('content') if isinstance(snippet, dict) else getattr(snippet, 'content', '')
-    }
-    for snippet in result.get('source_snippets', [])
-]
-
-                        
-                        st.session_state.conversation_history.append(conversation_entry)
-                        st.rerun()
+                result = ask_question_directly(question)
+                if result:
+                    st.rerun()
             else:
                 st.warning("Please enter a question.")
     
@@ -733,11 +770,10 @@ def render_challenge_mode():
             
             if st.button(f"Submit Answer {i+1}", key=submit_key):
                 if user_answer:
-                    with st.spinner("📊 Evaluating your answer..."):
-                        result = submit_challenge_answer(question_data['id'], user_answer)
-                        if result:
-                            st.session_state[evaluation_key] = result['evaluation']
-                            st.rerun()
+                    result = evaluate_challenge_answer_directly(question_data, user_answer)
+                    if result:
+                        st.session_state[evaluation_key] = result
+                        st.rerun()
                 else:
                     st.warning("Please provide an answer.")
             
@@ -785,18 +821,20 @@ def render_sidebar():
             st.session_state.challenge_questions = []
             st.session_state.conversation_history = []
             st.session_state.current_mode = "upload"
+            st.session_state.document_content = ""
+            st.session_state.vector_store = None
             st.rerun()
     
     # App info
     st.sidebar.markdown('<h3 style="color: var(--text-primary); font-weight: 600;">ℹ️ Technology Stack</h3>', unsafe_allow_html=True)
     st.sidebar.markdown("""
     <div style="color: var(--text-secondary); line-height: 1.6;">
-    <strong>🔧 Backend:</strong><br>
+    <strong>🔧 AI Engine:</strong><br>
     • LangChain for document processing<br>
     • LangGraph for workflow management<br>
-    • Gemini api for AI reasoning<br>
+    • TinyLlama 1.1B for AI reasoning<br>
     • FAISS for vector search<br>
-    • FastAPI for backend API<br><br>
+    • Agentic AI workflows<br><br>
     
     <strong>🎨 Frontend:</strong><br>
     • Streamlit for web interface<br>
@@ -815,6 +853,8 @@ def render_sidebar():
     • 💭 Conversation memory & follow-ups<br>
     • 📊 Detailed answer evaluation<br>
     • 🎯 Document-based references<br>
+    • 🤖 Agentic AI workflows<br>
+    • 🎯 LoRA fine-tuning support<br>
     • 📱 Mobile-responsive design
     </div>
     """, unsafe_allow_html=True)
