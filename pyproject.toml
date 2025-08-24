@@ -1,26 +1,117 @@
 [project]
-name = "ez-campus-drive-assignment"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "faiss-cpu>=1.11.0",
-    "fastapi[standard]>=0.116.1",
-    "langchain>=0.3.26",
-    "langchain-community>=0.3.27",
-    "langchain-google-genai>=2.1.7",
-    "langgraph>=0.5.2",
-    "openai>=1.95.1",
-    "pydantic>=2.11.7",
-    "pypdf2>=3.0.1",
-    "python-dotenv>=1.1.1",
-    "python-multipart>=0.0.20",
-    "rank-bm25>=0.2.2",
-    "requests>=2.32.4",
-    "scikit-learn>=1.7.0",
-    "sentence-transformers>=5.0.0",
-    "streamlit>=1.46.1",
-    "tiktoken>=0.9.0",
-    "typing-extensions>=4.14.1",
+name = "smart-research-assistant"
+version = "2.0.0"
+description = "An intelligent research assistant powered by TinyLlama with Agentic AI capabilities, RAG, and fine-tuning support"
+authors = [
+    {name = "Smart Research Assistant Team", email = "contact@smartassistant.com"}
 ]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+    "Topic :: Education",
+]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "streamlit>=1.28.0",
+    "python-multipart>=0.0.6",
+    "python-dotenv>=1.0.0",
+    "PyPDF2>=3.0.0",
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.10",
+    "langchain-huggingface>=0.0.10",
+    "langgraph>=0.0.20",
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "accelerate>=0.25.0",
+    "datasets>=2.14.0",
+    "peft>=0.7.0",
+    "bitsandbytes>=0.41.0",
+    "trl>=0.7.0",
+    "wandb>=0.15.0",
+    "faiss-cpu>=1.7.4",
+    "sentence-transformers>=2.2.2",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "tqdm>=4.65.0",
+    "tf-keras>=2.15.0",
+    "pydantic>=2.5.0",
+    "typing-extensions>=4.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/smart-research-assistant"
+Documentation = "https://github.com/yourusername/smart-research-assistant#readme"
+Repository = "https://github.com/yourusername/smart-research-assistant.git"
+Issues = "https://github.com/yourusername/smart-research-assistant/issues"
+
+[project.scripts]
+smart-assistant = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

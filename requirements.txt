@@ -1,17 +1,41 @@
-fastapi[standard]
-streamlit
-langchain
-langgraph
-openai
-faiss-cpu
-PyPDF2
-python-multipart
-pydantic
-python-dotenv
-requests
-typing-extensions
-tiktoken
-langchain_google_genai
-sentence-transformers
-scikit-learn
-rank_bm25
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+streamlit>=1.28.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# Document processing
+PyPDF2>=3.0.0
+
+# LangChain ecosystem
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-huggingface>=0.0.10
+langgraph>=0.0.20
+
+# Hugging Face Transformers and TinyLlama
+transformers>=4.40.0
+torch>=2.0.0
+accelerate>=0.25.0
+datasets>=2.14.0
+peft>=0.7.0
+bitsandbytes>=0.41.0
+trl>=0.7.0
+wandb>=0.15.0
+
+# Vector store and embeddings
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.2
+
+# Fine-tuning and optimization
+numpy>=1.24.0
+scipy>=1.10.0
+tqdm>=4.65.0
+
+# Keras compatibility (for Transformers)
+tf-keras>=2.15.0
+
+# Additional utilities
+pydantic>=2.5.0
+typing-extensions>=4.8.0
